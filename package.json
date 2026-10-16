@@ -1,6 +1,6 @@
 {
   "name": "@kensh1ken/gitfetch",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "A tiny CLI for viewing public GitHub user profiles.",
   "type": "module",
   "bin": {

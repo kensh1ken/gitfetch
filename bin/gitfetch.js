@@ -19,7 +19,7 @@ if (arguments_.includes("--help") || arguments_.includes("-h")) {
   process.exitCode = 0;
 } else {
   try {
-    const requestedUsername = username || "kensh1ken";
+    const requestedUsername = username || "octocat";
     const dashboard = await withSpinner(() => loadDashboard(requestedUsername, showEvents));
     render(React.createElement(Dashboard, { ...dashboard, showEvents }));
   } catch (error) {

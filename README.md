@@ -23,4 +23,12 @@ npm.cmd link
 gitfetch <github-username>
 ```
 
+Also to run without installing
+Do: 
+
+```powershell
+npx @kensh1ken/gitfetch <github-username>
+```
+
+
 i wanted to stalk my peers githubs without increasing their profile views. and slop profile readmes but primarily the profile view counter they have. 
