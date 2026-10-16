@@ -78,25 +78,100 @@ export async function fetchEvents(username, fetchImplementation = fetch) {
   return response.json();
 }
 
+export async function fetchRecentCommits(username, fetchImplementation = fetch) {
+  const cleanUsername = username.trim();
+
+  if (!cleanUsername) {
+    throw new Error("Please provide a GitHub username.");
+  }
+
+  const headers = {
+    Accept: "application/vnd.github+json",
+    "User-Agent": "gitfetch-cli",
+    "X-GitHub-Api-Version": "2026-03-10",
+  };
+  let repositoriesResponse;
+
+  try {
+    repositoriesResponse = await fetchImplementation(
+      `${API_BASE_URL}/users/${encodeURIComponent(cleanUsername)}/repos?sort=pushed&direction=desc&per_page=100`,
+      { headers },
+    );
+  } catch {
+    throw new Error(
+      "Could not reach GitHub. Check your internet connection and try again.",
+    );
+  }
+
+  if (!repositoriesResponse.ok) {
+    throw new Error(
+      `Could not load public repositories: GitHub returned ${repositoriesResponse.status} ${repositoriesResponse.statusText}.`,
+    );
+  }
+
+  const repositories = await repositoriesResponse.json();
+  const commitsByRepository = await Promise.all(
+    repositories.map(async (repository) => {
+      const commitsUrl = `${API_BASE_URL}/repos/${encodeURIComponent(repository.owner.login)}/${encodeURIComponent(repository.name)}/commits?author=${encodeURIComponent(cleanUsername)}&per_page=6`;
+
+      try {
+        const response = await fetchImplementation(commitsUrl, { headers });
+        if (!response.ok) return [];
+
+        const commits = await response.json();
+        return commits.map((commit) => ({
+          ...commit,
+          repository: repository.full_name ?? `${repository.owner.login}/${repository.name}`,
+        }));
+      } catch {
+        return [];
+      }
+    }),
+  );
+
+  return commitsByRepository
+    .flat()
+    .map((commit) => ({
+      repository: commit.repository,
+      sha: commit.sha,
+      message: commit.commit?.message,
+      date: commit.commit?.author?.date ?? commit.commit?.committer?.date,
+    }))
+    .sort((first, second) => new Date(second.date) - new Date(first.date))
+    .slice(0, 6);
+}
+
 export function formatUser(user) {
   const lines = [
     `GitHub profile: ${user.login}`,
     `Name: ${user.name ?? "Not provided"}`,
     `Bio: ${user.bio ?? "Not provided"}`,
-    `Location: ${user.location ?? "Not provided"}`,
-    `Company: ${user.company ?? "Not provided"}`,
+    user.location ? `Location: ${user.location}` : 0,
+    user.company ? `Company: ${user.company}` : 0,
     `Public repositories: ${user.public_repos.toLocaleString()}`,
     `Public gists: ${user.public_gists.toLocaleString()}`,
     `Followers: ${user.followers.toLocaleString()}`,
     `Following: ${user.following.toLocaleString()}`,
     `Joined GitHub: ${formatDate(user.created_at)}`,
-    `Profile: ${user.html_url}`,
+    `Profile: www.${user.html_url}`,
   ];
 
-  return lines.join("\n");
+  return lines.filter(Boolean).join("\n");
 }
 
 export function formatEvents(events) {
+  return events.slice(0, 6).map((event) => ({
+    action: eventAction(event.type),
+    branch: event.payload?.ref?.replace("refs/heads/", "") ?? null,
+    date: formatEventDate(event.created_at),
+    repository: event.repo?.name ?? "Unknown repository",
+    repositoryUrl: event.repo?.name
+      ? `https://github.com/${event.repo.name}`
+      : null,
+    shortSha: event.payload?.head?.slice(0, 7) ?? null,
+    type: event.type,
+  }));
+
   const recentEvents = events.slice(0, 6);
 
   if (recentEvents.length === 0) {
@@ -105,8 +180,31 @@ export function formatEvents(events) {
 
   return [
     "Last 6 public events:",
-    ...recentEvents.map((event) => `• ${formatEventDate(event.created_at)} — ${describeEvent(event)}`),
+    ...recentEvents.map((event) => `==> ${formatEventDate(event.created_at)} —\n    ${describeEvent(event)}`),
   ].join("\n");
+}
+
+function eventAction(eventType) {
+  switch (eventType) {
+    case "PushEvent":
+      return "Pushed to";
+    case "WatchEvent":
+      return "Starred";
+    case "CreateEvent":
+      return "Created in";
+    case "DeleteEvent":
+      return "Deleted from";
+    case "IssuesEvent":
+      return "Updated an issue in";
+    case "IssueCommentEvent":
+      return "Commented in";
+    case "PullRequestEvent":
+      return "Updated a pull request in";
+    case "ForkEvent":
+      return "Forked";
+    default:
+      return `Recorded ${readableEventType(eventType)} in`;
+  }
 }
 
 function describeEvent(event) {
@@ -122,21 +220,21 @@ function describeEvent(event) {
 
   switch (event.type) {
     case "PushEvent":
-      return `Pushed into Public Repository: ${repositoryLabel}${branch ? ` on ${branch}` : ""}${shortSha ? `. Latest commit: ${shortSha}` : ""}.`;
+      return `pushEvent: ${repositoryLabel}${branch ? ` on ${branch}` : ""}.`;
     case "WatchEvent":
-      return `Starred Public Repository: ${repositoryLabel}.`;
+      return `WatchEvent: ${repositoryLabel}.`;
     case "CreateEvent":
-      return `Created a ${event.payload?.ref_type ?? "new"} in ${repositoryLabel}.`;
+      return `CreateEvent: ${repositoryLabel}.`;
     case "DeleteEvent":
-      return `Deleted a ${event.payload?.ref_type ?? "reference"} from ${repositoryLabel}.`;
+      return `DeleteEvent: ${repositoryLabel}.`;
     case "IssuesEvent":
-      return `${capitalize(event.payload?.action ?? "updated")} an issue in ${repositoryLabel}.`;
+      return `IssuesEvent: ${repositoryLabel}.`;
     case "IssueCommentEvent":
-      return `Commented on an issue in ${repositoryLabel}.`;
+      return `IssueCommentEvent: ${repositoryLabel}.`;
     case "PullRequestEvent":
-      return `${capitalize(event.payload?.action ?? "updated")} a pull request in ${repositoryLabel}.`;
+      return `PullRequestEvent: ${repositoryLabel}.`;
     case "ForkEvent":
-      return `Forked Public Repository: ${repositoryLabel}.`;
+      return `ForkEvent: ${repositoryLabel}.`;
     default:
       return `Recorded a ${readableEventType(event.type)} in ${repositoryLabel}.`;
   }

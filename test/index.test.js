@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   fetchEvents,
+  fetchRecentCommits,
   fetchUser,
   formatEvents,
   formatUser,
@@ -56,6 +57,34 @@ test("fetchEvents returns the parsed events response", async () => {
   }]);
 });
 
+test("fetchRecentCommits returns the newest authored public commits", async () => {
+  const fakeFetch = async (url) => {
+    if (url.includes("/repos?")) {
+      return new Response(JSON.stringify([
+        { name: "first", owner: { login: "octocat" } },
+        { name: "second", owner: { login: "octocat" } },
+      ]), { status: 200 });
+    }
+
+    if (url.includes("/repos/octocat/first/commits")) {
+      return new Response(JSON.stringify([{
+        sha: "older1234567",
+        commit: { message: "Older commit", author: { date: "2026-10-01T00:00:00Z" } },
+      }]), { status: 200 });
+    }
+
+    return new Response(JSON.stringify([{
+      sha: "newer1234567",
+      commit: { message: "Newer commit", author: { date: "2026-10-02T00:00:00Z" } },
+    }]), { status: 200 });
+  };
+
+  const commits = await fetchRecentCommits("octocat", fakeFetch);
+
+  assert.deepEqual(commits.map((commit) => commit.sha), ["newer1234567", "older1234567"]);
+  assert.equal(commits[0].repository, "octocat/second");
+});
+
 test("formatUser makes profile data readable", () => {
   const output = formatUser({
     login: "octocat",
@@ -81,8 +110,8 @@ test("usage gives an example", () => {
   assert.match(usage(), /--events/);
 });
 
-test("formatEvents displays the six newest events as readable sentences", () => {
-  const output = formatEvents([
+test("formatEvents returns six structured events for the UI", () => {
+  const activity = formatEvents([
     {
       type: "PushEvent",
       created_at: "2026-10-11T14:17:45Z",
@@ -103,12 +132,19 @@ test("formatEvents displays the six newest events as readable sentences", () => 
     }))
   ]);
 
-  assert.match(output, /Last 6 public events:/);
-  assert.match(output, /Pushed into Public Repository: octocat\/Hello-World\[https:\/\/github.com\/octocat\/Hello-World\] on main\. Latest commit: a45923b\./);
-  assert.match(output, /Starred Public Repository: octocat\/Spoon-Knife/);
-  assert.equal(output.split("\n").length, 7);
+  assert.equal(activity.length, 6);
+  assert.deepEqual(activity[0], {
+    action: "Pushed to",
+    branch: "main",
+    date: "Oct 11, 2026, 7:47 PM",
+    repository: "octocat/Hello-World",
+    repositoryUrl: "https://github.com/octocat/Hello-World",
+    shortSha: "a45923b",
+    type: "PushEvent"
+  });
+  assert.equal(activity[1].action, "Starred");
 });
 
-test("formatEvents explains when no public events exist", () => {
-  assert.equal(formatEvents([]), "Recent public activity: No public events found.");
+test("formatEvents returns no activity when no events exist", () => {
+  assert.deepEqual(formatEvents([]), []);
 });
